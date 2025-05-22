@@ -11,6 +11,7 @@
 ;; <bool-te>      ::= boolean  // bool-te()
 ;; <str-te>       ::= string   // str-te()
 ;; <void-te>      ::= void     // void-te()
+
 ;; <compound-te>  ::= <proc-te> | <tuple-te>
 ;; <non-tuple-te> ::= <atomic-te> | <proc-te> | <tvar>
 ;; <proc-te>      ::= [ <tuple-te> -> <non-tuple-te> ] // proc-te(param-tes: list(te), return-te: te)
@@ -112,6 +113,7 @@ export const tvarContents = (tv: TVar): undefined | TExp => unbox(tv.contents);
 export const tvarSetContents = (tv: TVar, val: TExp): void =>
     setBox(tv.contents, val);
 export const tvarIsNonEmpty = (tv: TVar): boolean => tvarContents(tv) !== undefined;
+//Finds the actual value inside the object, if its "buried": T1 = t2 = ... = number: this will return number
 export const tvarDeref = (te: TExp): TExp => {
     if (! isTVar(te)) return te;
     const contents = tvarContents(te);
@@ -248,6 +250,7 @@ export const unparseTExp = (te: TExp): Result<string> => {
 
 type Pair<T1, T2> = {left: T1; right: T2};
 
+//Main entry point. 
 const matchTVarsInTE = <T1, T2>(te1: TExp, te2: TExp,
                                 succ: (mapping: Array<Pair<TVar, TVar>>) => T1,
                                 fail: () => T2): T1 | T2 =>
