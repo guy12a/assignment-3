@@ -40,8 +40,8 @@ import { Result, bind, makeOk, makeFailure, mapResult, mapv } from "../shared/re
 import { parse as p } from "../shared/parser";
 import { format } from "../shared/format";
 
-export type TExp =  AtomicTExp | CompoundTExp | TVar;
-export const isTExp = (x: any): x is TExp => isAtomicTExp(x) || isCompoundTExp(x) || isTVar(x);
+export type TExp =  AtomicTExp | CompoundTExp | TVar | PairTExp;
+export const isTExp = (x: any): x is TExp => isAtomicTExp(x) || isCompoundTExp(x) || isTVar(x) || isPairTExp(x);
 
 export type AtomicTExp = NumTExp | BoolTExp | StrTExp | VoidTExp;
 export const isAtomicTExp = (x: any): x is AtomicTExp =>
@@ -53,6 +53,13 @@ export const isCompoundTExp = (x: any): x is CompoundTExp => isProcTExp(x) || is
 export type NonTupleTExp = AtomicTExp | ProcTExp | TVar;
 export const isNonTupleTExp = (x: any): x is NonTupleTExp =>
     isAtomicTExp(x) || isProcTExp(x) || isTVar(x);
+
+
+export type PairTExp = { tag: "PairTExp"; leftTE: TExp; rightTE: TExp };
+export const makePairTExp = (l: TExp, r: TExp): PairTExp =>
+    ({ tag: "PairTExp", leftTE: l, rightTE: r });
+export const isPairTExp = (x: any): x is PairTExp => x.tag === "PairTExp";
+
 
 export type NumTExp = { tag: "NumTExp" };
 export const makeNumTExp = (): NumTExp => ({tag: "NumTExp"});
@@ -151,7 +158,7 @@ export const parseTE = (t: string): Result<TExp> =>
 ;; parseTExp('(T * T -> boolean)') => '(proc-te ((tvar T) (tvar T)) bool-te)
 ;; parseTExp('(number -> (number -> number)') => '(proc-te (num-te) (proc-te (num-te) num-te))
 */
-export const parseTExp = (texp: Sexp): Result<TExp> =>
+export const parseTExp = (texp: Sexp): Result<TExp> => 
     (texp === "number") ? makeOk(makeNumTExp()) :
     (texp === "boolean") ? makeOk(makeBoolTExp()) :
     (texp === "void") ? makeOk(makeVoidTExp()) :
@@ -165,15 +172,22 @@ export const parseTExp = (texp: Sexp): Result<TExp> =>
 ;; expected exactly one -> in the list
 ;; We do not accept (a -> b -> c) - must parenthesize
 */
-const parseCompoundTExp = (texps: Sexp[]): Result<ProcTExp> => {
-    const pos = texps.indexOf('->');
-    return (pos === -1)  ? makeFailure(`Procedure type expression without -> - ${format(texps)}`) :
-           (pos === 0) ? makeFailure(`No param types in proc texp - ${format(texps)}`) :
-           (pos === texps.length - 1) ? makeFailure(`No return type in proc texp - ${format(texps)}`) :
-           (texps.slice(pos + 1).indexOf('->') > -1) ? makeFailure(`Only one -> allowed in a procexp - ${format(texps)}`) :
-           bind(parseTupleTExp(texps.slice(0, pos)), (args: TExp[]) =>
-               mapv(parseTExp(texps[pos + 1]), (returnTE: TExp) =>
-                    makeProcTExp(args, returnTE)));
+const parseCompoundTExp = (texps: Sexp[]): Result<TExp> => {
+    if (texps[0] === 'Pair' && texps.length === 3) {
+        return bind(parseTExp(texps[1]), (l) =>
+           mapv(parseTExp(texps[2]), (r) => makePairTExp(l, r)));
+    }
+    else{
+        const pos = texps.indexOf('->');
+        return (pos === -1)  ? makeFailure(`Procedure type expression without -> - ${format(texps)}`) :
+            (pos === 0) ? makeFailure(`No param types in proc texp - ${format(texps)}`) :
+            (pos === texps.length - 1) ? makeFailure(`No return type in proc texp - ${format(texps)}`) :
+            (texps.slice(pos + 1).indexOf('->') > -1) ? makeFailure(`Only one -> allowed in a procexp - ${format(texps)}`) :
+            bind(parseTupleTExp(texps.slice(0, pos)), (args: TExp[]) =>
+                mapv(parseTExp(texps[pos + 1]), (returnTE: TExp) =>
+                        makeProcTExp(args, returnTE)));
+
+    }
 };
 
 /*
@@ -211,6 +225,8 @@ export const unparseTExp = (te: TExp): Result<string> => {
         isVoidTExp(x) ? makeOk('void') :
         isEmptyTVar(x) ? makeOk(x.var) :
         isTVar(x) ? up(tvarContents(x)) :
+        isPairTExp(x) ? bind(unparseTExp(x.leftTE), (l:string) => 
+            (bind(unparseTExp(x.rightTE), (r:string) => makeOk(['Pair',l, r])))) :
         isProcTExp(x) ? bind(unparseTuple(x.paramTEs), (paramTEs: string[]) =>
                             mapv(unparseTExp(x.returnTE), (returnTE: string) =>
                                 [...paramTEs, '->', returnTE])) :
