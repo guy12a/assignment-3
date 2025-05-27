@@ -269,11 +269,20 @@ type Pair<T1, T2> = {left: T1; right: T2};
 //Main entry point. 
 const matchTVarsInTE = <T1, T2>(te1: TExp, te2: TExp,
                                 succ: (mapping: Array<Pair<TVar, TVar>>) => T1,
-                                fail: () => T2): T1 | T2 =>
+                                fail: () => T2): T1 | T2 => 
     (isTVar(te1) || isTVar(te2)) ? matchTVarsinTVars(tvarDeref(te1), tvarDeref(te2), succ, fail) :
     (isAtomicTExp(te1) || isAtomicTExp(te2)) ?
         ((isAtomicTExp(te1) && isAtomicTExp(te2) && eqAtomicTExp(te1, te2)) ? succ([]) : fail()) :
-    matchTVarsInTProcs(te1, te2, succ, fail);
+    (isProcTExp(te1) && isProcTExp(te2)) ? 
+        matchTVarsInTProcs(te1, te2, succ, fail) :
+    (isPairTExp(te1) && isPairTExp(te2)) ? 
+        // recursively match leftTE and rightTE, combine their mappings
+        matchTVarsInTE(te1.leftTE, te2.leftTE,
+            (leftMapping) => matchTVarsInTE(te1.rightTE, te2.rightTE,
+                (rightMapping) => succ(concat(leftMapping, rightMapping)),
+                fail),
+            fail) :
+    fail();
 
 // te1 and te2 are the result of tvarDeref
 const matchTVarsinTVars = <T1, T2>(te1: TExp, te2: TExp,

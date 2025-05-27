@@ -189,7 +189,7 @@ const parseL5GoodProgram = (keyword: Sexp, body: Sexp[]): Result<Program> =>
 
 export const parseL5Exp = (sexp: Sexp): Result<Exp> =>
     isNonEmptyList<Sexp>(sexp) ? parseL5CompoundExp(first(sexp), rest(sexp)) :
-    isToken(sexp) ? parseL5Atomic(sexp) :
+    isToken(sexp) ? parseL5AtomicOrQuote(sexp) :
     makeFailure("Exp cannot be an empty list");
 
 export const parseL5CompoundExp = (op: Sexp, params: Sexp[]): Result<Exp> =>
@@ -223,6 +223,16 @@ const parseGoodDefine = (variable: Sexp, val: Sexp): Result<DefineExp> =>
     bind(parseVarDecl(variable), (varDecl: VarDecl) =>
         mapv(parseL5CExp(val), (val: CExp) =>
             makeDefineExp(varDecl, val)));
+
+const parseL5AtomicOrQuote = (token: Token): Result<Exp> => {
+    // Handles things like `'5` → `(quote 5)`
+    if (isString(token) && token.startsWith("'")) {
+        const inner = token.slice(1); // remove leading quote
+        // Recurse into parseL5Exp on the quoted value
+        return parseL5Exp(["quote", inner]);
+    }
+    return parseL5Atomic(token);
+};
 
 export const parseL5Atomic = (token: Token): Result<AtomicExp> =>
     token === "#t" ? makeOk(makeBoolExp(true)) :

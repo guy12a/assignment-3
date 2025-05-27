@@ -15,24 +15,27 @@ import { isProcTExp, makeBoolTExp, makeNumTExp, makeProcTExp, makeStrTExp, makeV
          BoolTExp, NumTExp, StrTExp, TExp, VoidTExp, 
          makePairTExp,
          makeTVar,
-         isPairTExp} from "./TExp";
+         isPairTExp,
+         PairTExp} from "./TExp";
 import { isEmpty, allT, first, rest, NonEmptyList, List, isNonEmptyList } from '../shared/list';
 import { Result, makeFailure, bind, makeOk, zipWithResult, isOk, isFailure, mapv } from '../shared/result';
 import { parse as p } from "../shared/parser";
 import { format } from '../shared/format';
 import { isCompoundSExp, isEmptySExp, isSymbolSExp, SExpValue } from './L5-value';
 import { isNumber } from '../shared/type-predicates';
-import { equivalentTEs } from "./TExp";
+import * as TI from "./L5-typeinference";
+
+
 
 
 import { tvarDeref, isTVar, tvarSetContents } from "./TExp";
 
 
-const deepDeref = (te: TExp): TExp =>
-    isTVar(te) ? tvarDeref(te) :
-    isProcTExp(te) ? makeProcTExp(te.paramTEs.map(deepDeref), deepDeref(te.returnTE)) :
-    isPairTExp(te) ? makePairTExp(deepDeref(te.leftTE), deepDeref(te.rightTE)) :
-    te;
+// const deepDeref = (te: TExp): TExp =>
+//     isTVar(te) ? tvarDeref(te) :
+//     isProcTExp(te) ? makeProcTExp(te.paramTEs.map(deepDeref), deepDeref(te.returnTE)) :
+//     isPairTExp(te) ? makePairTExp(deepDeref(te.leftTE), deepDeref(te.rightTE)) :
+//     te;
 
 
 // unify: if one is TVar, unify it
@@ -50,23 +53,25 @@ const unifyTVar = (t1: TExp, t2: TExp): boolean => {
     }
 };
 
+// Purpose: Check if two PairTExp types are equal by comparing their components
+const checkEqualPairType = (te1: PairTExp, te2: PairTExp, exp: Exp): Result<true> =>
+    bind(checkEqualType(te1.leftTE, te2.leftTE, exp), _ =>
+        checkEqualType(te1.rightTE, te2.rightTE, exp));
+
 
 // Purpose: Check that type expressions are equivalent
 // as part of a fully-annotated type check process of exp.
 // Return an error if the types are different - true otherwise.
 // Exp is only passed for documentation purposes.
-const checkEqualType = (te1: TExp, te2: TExp, exp: Exp): Result<true> => {
-    const t1 = deepDeref(te1);
-    const t2 = deepDeref(te2);
+const checkEqualType = (te1: TExp, te2: TExp, exp: Exp): Result<true> => 
+    TI.checkEqualType(te1,te2,exp);
+    // equals(te1, te2) ? makeOk(true) :
+    // isPairTExp(te1) && isPairTExp(te2) ? checkEqualPairType(te1, te2, exp) : 
+    // bind(unparseTExp(te1), (te1: string) =>
+    //     bind(unparseTExp(te2), (te2: string) =>
+    //         bind(unparse(exp), (exp: string) => 
+    //             makeFailure<true>(`Incompatible types: ${te1} and ${te2} in ${exp}`))));
 
-    if (equivalentTEs(t1, t2))
-        return makeOk(true);
-
-    return bind(unparseTExp(t1), (t1s: string) =>
-        bind(unparseTExp(t2), (t2s: string) =>
-            bind(unparse(exp), (es: string) =>
-                makeFailure<true>(`Incompatible types: ${t1s} and ${t2s} in ${es}`))));
-};
 // Compute the type of L5 AST exps to TE
 // ===============================================
 // Compute a Typed-L5 AST exp to a Texp on the basis
@@ -150,18 +155,9 @@ export const typeofPrim = (p: PrimOp): Result<TExp> => {
         (p.op === 'string=?') ? parseTE('((T1 * T2) -> boolean)') :
         (p.op === 'display') ? parseTE('(T -> void)') :
         (p.op === 'newline') ? parseTE('(Empty -> void)') :
-        (p.op === 'cons') ? makeOk(makeProcTExp(
-            [T1, T2],
-            makePairTExp(T1, T2)
-        )) :
-        (p.op === 'car') ? makeOk(makeProcTExp(
-            [makePairTExp(T1, T2)],
-            T1
-        )) :
-        (p.op === 'cdr') ? makeOk(makeProcTExp(
-            [makePairTExp(T1, T2)],
-            T2
-        )) :
+        (p.op === 'cons') ? makeOk(makeProcTExp([T1, T2], makePairTExp(T1, T2))) :
+        (p.op === 'car') ? makeOk(makeProcTExp([makePairTExp(T1, T2)], T1)) :
+        (p.op === 'cdr') ? makeOk(makeProcTExp([makePairTExp(T1, T2)], T2)) :
         makeFailure(`Primitive not yet implemented: ${p.op}`)
     );
 };
@@ -215,7 +211,7 @@ export const typeofApp = (app: AppExp, tenv: TEnv): Result<TExp> =>
             return bind(unparse(app), (exp: string) => makeFailure<TExp>(`Wrong parameter numbers passed to proc: ${exp}`));
         }
         const constraints = zipWithResult((rand, trand) => bind(typeofExp(rand, tenv), (typeOfRand: TExp) => 
-                                                                checkEqualType(typeOfRand, trand, app)),
+                                                                TI.checkEqualType(typeOfRand, trand, app)),
                                           app.rands, ratorTE.paramTEs);
         return bind(constraints, _ => makeOk(ratorTE.returnTE));
     });
@@ -276,11 +272,10 @@ export const typeofLetrec = (exp: LetrecExp, tenv: TEnv): Result<TExp> => {
 export const typeofDefine = (exp: DefineExp, tenv: TEnv): Result<VoidTExp> => {
     const varDeclType = exp.var.texp;
     const valType = typeofExp(exp.val, tenv);
-    const constraint1 = bind(valType, valType => checkEqualType(valType, varDeclType, exp));
+    const constraint1 = bind(valType, valType => TI.checkEqualType(varDeclType, valType, exp));
 
-    return bind(valType, valType =>
-        bind(checkEqualType(valType, varDeclType, exp), _ =>
-            makeOk(makeVoidTExp())));
+    return bind(constraint1, res =>
+            makeOk(makeVoidTExp()));
 
 };
 
@@ -315,14 +310,30 @@ export const L5programTypeof = (exp:string): Result<string> => {
         bind(typeofProgram(prog, makeEmptyTEnv()), (type: TExp)=> unparseTExp(type)));
 }
 
-export const typeOfLit = (val: SExpValue): Result<TExp> =>
+const isQuoteSExp = (val: SExpValue): boolean =>
+  isCompoundSExp(val) &&
+  isSymbolSExp(val.val1) &&
+  val.val1.val === "quote";
+
+// Recursive helper: gives actual types for nested literals (pairs, numbers, etc.)
+const typeOfLitInner = (val: SExpValue): Result<TExp> =>
+    isQuoteSExp(val) ? makeOk(makeTVar("literal")):
     isCompoundSExp(val) ?
-        bind(typeOfLit(val.val1), (t1) =>
-        mapv(typeOfLit(val.val2), (t2) =>
+        bind(typeOfLitInner(val.val1), (t1) =>
+        mapv(typeOfLitInner(val.val2), (t2) =>
             makePairTExp(t1, t2))) :
     isNumber(val) ? makeOk(makeNumTExp()) :
     typeof val === "boolean" ? makeOk(makeBoolTExp()) :
     typeof val === "string" ? makeOk(makeStrTExp()) :
-    isSymbolSExp(val) ? makeOk(makeTVar("literal")) : // <-- זה קריטי
+    isSymbolSExp(val) ? makeOk(makeTVar("literal")) :
     isEmptySExp(val) ? makeOk(makeVoidTExp()) :
     makeFailure(`Unknown literal type: ${val}`);
+
+// Main function called by type checker on LitExp
+export const typeOfLit = (val: SExpValue): Result<TExp> =>
+    isCompoundSExp(val) ?
+        bind(typeOfLitInner(val.val1), (t1) =>
+        mapv(typeOfLitInner(val.val2), (t2) =>
+            makePairTExp(t1, t2))) :
+    // top-level quoted literal is always a generic literal type
+    makeOk(makeTVar("literal"));

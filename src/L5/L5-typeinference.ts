@@ -10,15 +10,21 @@ import { Result, makeFailure, makeOk, bind, zipWithResult, mapResult, mapv } fro
 import { parse as p } from "../shared/parser";
 import { format } from "../shared/format";
 
+// Purpose: Check if two PairTExp types are equal by comparing their components
+const checkEqualPairType = (te1: T.PairTExp, te2: T.PairTExp, exp: A.Exp): Result<true> =>
+    bind(checkEqualType(te1.leftTE, te2.leftTE, exp), _ =>
+        checkEqualType(te1.rightTE, te2.rightTE, exp));
+
 // Purpose: Make type expressions equivalent by deriving a unifier
 // Return an error if the types are not unifiable.
 // Exp is only passed for documentation purposes.
 // te1 can be undefined when it is retrieved from a type variable which is not yet bound.
-const checkEqualType = (te1: T.TExp | undefined, te2: T.TExp, exp: A.Exp): Result<true> =>
+export const checkEqualType = (te1: T.TExp | undefined, te2: T.TExp, exp: A.Exp): Result<true> =>
     te1 === undefined ? bind(T.unparseTExp(te2), (texp: string) => makeFailure(`Incompatible types: undefined - ${format(texp)}`)) :
     T.isTVar(te1) && T.isTVar(te2) ? ((T.eqTVar(te1, te2) ? makeOk(true) : checkTVarEqualTypes(te1, te2, exp))) :
     T.isTVar(te1) ? checkTVarEqualTypes(te1, te2, exp) :
     T.isTVar(te2) ? checkTVarEqualTypes(te2, te1, exp) :
+    T.isPairTExp(te1) && T.isPairTExp(te2) ? checkEqualPairType(te1, te2, exp) :
     T.isAtomicTExp(te1) && T.isAtomicTExp(te2) ?
         T.eqAtomicTExp(te1, te2) ? makeOk(true) : bind(T.unparseTExp(te1), (te1: string) =>
                                                     bind(T.unparseTExp(te2), (te2: string) =>
@@ -60,6 +66,7 @@ const checkNoOccurrence = (tvar: T.TVar, te: T.TExp, exp: A.Exp): Result<true> =
     const loop = (te1: T.TExp): Result<true> =>
         T.isAtomicTExp(te1) ? makeOk(true) :
         T.isProcTExp(te1) ? checkList(T.procTExpComponents(te1)) :
+        T.isPairTExp(te1) ? checkList([te1.leftTE, te1.rightTE]) :
         T.isTVar(te1) ? 
             (T.eqTVar(te1, tvar) ? bind(A.unparse(exp), (exp: string) => makeFailure(`Occur check error - ${te1.var} - ${tvar.var} in ${format(exp)}`)) : 
              makeOk(true)) :
@@ -93,6 +100,7 @@ export const typeofExp = (exp: A.Parsed, tenv: E.TEnv): Result<T.TExp> =>
     A.isLetrecExp(exp) ? typeofLetrec(exp, tenv) :
     A.isDefineExp(exp) ? typeofDefine(exp, tenv) :
     A.isProgram(exp) ? typeofProgram(exp, tenv) :
+    A.isLitExp(exp) ? TC.typeOfLit(exp.val):
     // TODO: isSetExp(exp) isLitExp(exp)
     makeFailure(`Unknown type: ${format(exp)}`);
 
